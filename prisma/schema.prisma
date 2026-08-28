@@ -1,0 +1,137 @@
+// 개인정보 처리시스템 점검 자료 취합 사이트 - Prisma schema
+// SQLite는 enum을 지원하지 않으므로 상태값은 String으로 관리합니다.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+}
+
+/// 점검 항목 대분류 (예: 접근권한 관리, 암호화 조치 ...)
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  items       Item[]
+}
+
+/// 점검 세부 항목. 관리자가 언제든 추가/수정/비활성화할 수 있어 평가 기준 변경에
+/// 유연하게 대응합니다 (확장성 요구사항).
+model Item {
+  id           String      @id @default(cuid())
+  categoryId   String
+  category     Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  code         String?
+  title        String
+  description  String?
+  evidenceType String      @default("STATUS") // STATUS | STATUS_FILE | TEXT | FILE
+  required     Boolean     @default(true)
+  order        Int         @default(0)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  roundItems   RoundItem[]
+}
+
+/// 자료를 제출하는 기관/부서/개인정보 처리시스템 단위
+model System {
+  id           String        @id @default(cuid())
+  name         String
+  department   String?
+  managerName  String?
+  managerEmail String?
+  managerPhone String?
+  token        String        @unique @default(cuid())
+  memo         String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  roundSystems RoundSystem[]
+}
+
+/// 자료 취합 회차(정기/수시 캠페인). 여러 회차를 계속 만들어 수시 취합이 가능합니다.
+model Round {
+  id           String        @id @default(cuid())
+  name         String
+  description  String?
+  status       String        @default("DRAFT") // DRAFT | OPEN | CLOSED
+  startDate    DateTime?
+  dueDate      DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  roundItems   RoundItem[]
+  roundSystems RoundSystem[]
+}
+
+/// 회차 생성 시점의 점검 항목 스냅샷. 이후 Item이 바뀌어도 과거 회차 기록은 보존됩니다.
+model RoundItem {
+  id           String     @id @default(cuid())
+  roundId      String
+  round        Round      @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  itemId       String?
+  item         Item?      @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  categoryName String
+  code         String?
+  title        String
+  description  String?
+  evidenceType String
+  required     Boolean
+  order        Int
+  responses    Response[]
+}
+
+/// 특정 회차에 특정 시스템(부서)이 배정된 제출 현황
+model RoundSystem {
+  id           String     @id @default(cuid())
+  roundId      String
+  round        Round      @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  systemId     String
+  system       System     @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  status       String     @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | SUBMITTED | REVIEWED
+  submittedAt  DateTime?
+  reviewedAt   DateTime?
+  reviewerNote String?
+  responses    Response[]
+
+  @@unique([roundId, systemId])
+}
+
+/// 항목별 응답 (이행 여부, 비고, 첨부 증적)
+model Response {
+  id            String       @id @default(cuid())
+  roundSystemId String
+  roundSystem   RoundSystem  @relation(fields: [roundSystemId], references: [id], onDelete: Cascade)
+  roundItemId   String
+  roundItem     RoundItem    @relation(fields: [roundItemId], references: [id], onDelete: Cascade)
+  status        String? // 이행 | 부분이행 | 미이행 | 해당없음
+  note          String?
+  updatedAt     DateTime     @updatedAt
+  attachments   Attachment[]
+
+  @@unique([roundSystemId, roundItemId])
+}
+
+model Attachment {
+  id         String   @id @default(cuid())
+  responseId String
+  response   Response @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  filename   String
+  storedName String
+  size       Int
+  mimeType   String
+  uploadedAt DateTime @default(now())
+}
