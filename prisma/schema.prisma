@@ -1,0 +1,156 @@
+// 개인정보 처리시스템 점검 자료 취합 사이트 v2
+// SQLite는 enum을 지원하지 않으므로 상태값은 String으로 관리하고 lib/constants.ts에서 정의합니다.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+/// 점검 영역 (예: 접근권한 관리, 암호화 조치)
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  order       Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  items       Item[]
+}
+
+/// 점검 항목 원본. 회차 생성 시 RoundItem으로 복사되므로 수정해도 과거 회차에 영향이 없습니다.
+model Item {
+  id           String   @id @default(cuid())
+  categoryId   String
+  category     Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  code         String?
+  title        String
+  description  String?
+  responseType String   @default("STATUS_FILE") // STATUS | STATUS_FILE | TEXT | FILE
+  required     Boolean  @default(true)
+  order        Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// 점검 대상 개인정보 처리시스템(또는 부서)
+model System {
+  id           String        @id @default(cuid())
+  name         String
+  department   String?
+  managerName  String?
+  managerEmail String?
+  managerPhone String?
+  memo         String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  assignments  Assignment[]
+}
+
+/// 취합 회차
+model Round {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  status      String       @default("DRAFT") // DRAFT | OPEN | CLOSED
+  startDate   DateTime?
+  dueDate     DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  items       RoundItem[]
+  assignments Assignment[]
+}
+
+/// 회차 생성 시점의 점검 항목 스냅샷
+model RoundItem {
+  id           String     @id @default(cuid())
+  roundId      String
+  round        Round      @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  sourceItemId String?
+  categoryName String
+  code         String?
+  title        String
+  description  String?
+  responseType String
+  required     Boolean
+  order        Int
+  responses    Response[]
+
+  @@index([roundId])
+}
+
+/// 회차 × 시스템 배정. 제출 링크 토큰과 제출/검토 상태를 가집니다.
+model Assignment {
+  id          String     @id @default(cuid())
+  roundId     String
+  round       Round      @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  systemId    String
+  system      System     @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  token       String     @unique
+  status      String     @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | SUBMITTED | RETURNED | APPROVED
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  reviewNote  String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  responses   Response[]
+
+  @@unique([roundId, systemId])
+}
+
+/// 항목별 응답
+model Response {
+  id            String       @id @default(cuid())
+  assignmentId  String
+  assignment    Assignment   @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  roundItemId   String
+  roundItem     RoundItem    @relation(fields: [roundItemId], references: [id], onDelete: Cascade)
+  status        String? // COMPLIANT | PARTIAL | NON_COMPLIANT | NOT_APPLICABLE
+  note          String?
+  reviewComment String?
+  updatedAt     DateTime     @updatedAt
+  attachments   Attachment[]
+
+  @@unique([assignmentId, roundItemId])
+}
+
+/// 증적파일. 실제 파일은 UPLOAD_DIR 아래 storedName으로 저장됩니다.
+model Attachment {
+  id         String   @id @default(cuid())
+  responseId String
+  response   Response @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  filename   String
+  storedName String   @unique
+  size       Int
+  mimeType   String
+  uploadedAt DateTime @default(now())
+}
+
+/// 감사 로그
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorType String // ADMIN | SUBMITTER | SYSTEM
+  actor     String // 관리자 이메일 또는 "시스템명(배정ID)"
+  action    String
+  target    String?
+  detail    String?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
